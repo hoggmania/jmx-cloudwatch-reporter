@@ -6,7 +6,9 @@ import java.io.FileInputStream;
 import java.io.InputStreamReader;
 import java.lang.instrument.Instrumentation;
 import java.lang.management.ManagementFactory;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
@@ -33,14 +35,18 @@ public class ReporterAgent {
 		Object propertyPath = System.getProperties().get("aws.credentials.file"); 
 		Object beanPath = System.getProperties().get("beans.file");
 		Object endPoint	= System.getProperties().get("aws.cloudwatch.endpoint");
+		Object instanceId = System.getProperties().get("aws.instance");
 		
 		
 		//read path for credentials file to s3
 		//and also read path to list of jmx beans to do transfer for
-		if(  propertyPath != null && beanPath != null && endPoint != null ){
+		if(  propertyPath != null && beanPath != null && endPoint != null && instanceId != null ){
 			
 			BufferedReader beanList = null;
 
+			//suffix so we get counters splitted per instance
+			String suffix = " instance="+instanceId+"*";
+			
 			try {
 			
 				//credential should be specified as described here http://docs.aws.amazon.com/AWSJavaSDK/latest/javadoc/com/amazonaws/auth/PropertiesCredentials.html
@@ -50,11 +56,14 @@ public class ReporterAgent {
 				beanList = new BufferedReader( new InputStreamReader( new FileInputStream(new File(beanPath.toString())) ) );
 				
 				//reads list of allowed beans
-				final Set<String> allowedBeans = new HashSet<String>();
+				final Map<String,String> allowedBeans = new HashMap<String,String>();
 				String beanName = beanList.readLine();
 
 				while( beanName != null ){
-					allowedBeans.add(beanName);
+					//split into allowed name, cloudwatch name
+					//note that name should contain at least a space, as the cloud watch reporter otherwise will fail in
+					String[] beanNameSplitted = beanName.split("\t");
+					allowedBeans.put(beanNameSplitted[0],(beanNameSplitted.length > 1 ? beanNameSplitted[1] : beanNameSplitted[0])+suffix ) ;
 					beanName = beanList.readLine();
 				}
 				
@@ -79,30 +88,28 @@ public class ReporterAgent {
 							if(MBeanServerNotification.REGISTRATION_NOTIFICATION.equals(mbs.getType())) {
 	
 								MBeanInfo beanInfo = beanServer.getMBeanInfo(mbs.getMBeanName());
-								if( allowedBeans.contains( mbs.getMBeanName().toString() ) ){
 									for( MBeanAttributeInfo attribute : beanInfo.getAttributes() ){
 										if( attribute.isReadable() ){
-											
-											//note that name should contain at least a space, as the cloud watch reporter otherwise will fail in
-											metricRegistry.register("voldemort-metrics " + mbs.getMBeanName().toString()+"."+attribute.getName(), new JmxAttributeGauge(mbs.getMBeanName(), attribute.getName()));
 
-										    //start cloudwatch reporting
-										    new CloudWatchReporter(
-												metricRegistry,
-										        "voldemort-metrics",
-										        cloudWatchClient
-										    ).start(10, TimeUnit.SECONDS);
+											String counterName = allowedBeans.get( mbs.getMBeanName().toString() +"."+attribute.getName() ); 
 											
+											if( counterName != null ){
+
+												metricRegistry.register(counterName, new JmxAttributeGauge(mbs.getMBeanName(), attribute.getName()));
+	
+												System.out.println("MBean Registered [" + mbs.getMBeanName() +"."+attribute.getName()+ "] as " + counterName);
 										
+											} else {
+												
+												System.out.println( "MBean [" + mbs.getMBeanName().toString() + "."+attribute.getName()+"] was not registered as attribute wasn't in the white list" );
+											}
+											
+											
 										} else {
 											System.out.println( "MBean [" + mbs.getMBeanName().toString() + "]."+attribute.getName()+" was not registered as attribute wasn't readable" );
 										}
 									}
-								} else {
-									System.out.println( "MBean [" + mbs.getMBeanName().toString() + "] was not registered as name wasn't in bean file" );
-								}
 								
-								System.out.println("MBean Registered [" + mbs.getMBeanName() + "]");
 						    }
 						} catch (  Exception exc ){
 							System.err.println("error while registering bean:"+exc.getMessage());
@@ -117,6 +124,13 @@ public class ReporterAgent {
 			    filter.enableAllObjectNames();				
 				beanServer.addNotificationListener(MBeanServerDelegate.DELEGATE_NAME, listener, filter, null);
 
+			    //start cloudwatch reporting
+			    new CloudWatchReporter(
+					metricRegistry,
+			        "voldemort-metrics",
+			        cloudWatchClient
+			    ).start(10, TimeUnit.SECONDS);
+				
 				
 			} catch ( Exception exc ){
 				System.err.println("Got error while setting up bean listeners:" + exc.getMessage());
@@ -140,6 +154,9 @@ public class ReporterAgent {
 			}
 			if( endPoint == null ){
 				System.out.println("No endpoint found for cloudwatch client, please start jvm with -Daws.cloudwatch.endpoint={endpoint}");
+			}
+			if( instanceId == null ){
+				System.out.println("No instance id found for cloudwatch client, please start jvm with -Daws.instance={instance id}");
 			}
 			
 		}
