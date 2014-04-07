@@ -1,0 +1,34 @@
+{
+    "awsSecretKey": "x",
+    "awsAccessKey": "y",
+    "reportInterval": 300,
+    "instanceId" : "server1",
+    "simpleLogger":{
+        "defaultLogLevel":"error"
+    },
+    "beans": {
+        "java.lang:type=OperatingSystem": {
+          "ProcessCpuLoad":"ProcessCpuLoad",
+          "OpenFileDescriptorCount":"OpenFileDescriptorCount"
+        },
+        "java.lang:type=GarbageCollector,name=PS MarkSweep": {
+          "CollectionTime":"FullGCTime"
+        },
+        "java.lang:type=Memory":{
+            "HeapMemoryUsage":{
+                "max" :"HeapMax",
+                "used" :"HeapUsed"
+            }
+        },
+        "voldemort.store.stats:type=test":{
+            "numberOfCallsToGet":"Gets store=test*",
+            "numberOfCallsToPut":"Puts store=test*",
+            "q99GetLatencyInMs" :"q99GetLatency store=test*"
+        },
+        "voldemort.store.stats:type=urlMap":{
+            "numberOfCallsToGet":"Gets store=urlMap*",
+            "numberOfCallsToPut":"Puts store=urlMap*",
+            "q99GetLatencyInMs" :"q99GetLatency store=urlMap*"
+        }
+    }
+}
